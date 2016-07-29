@@ -3,6 +3,7 @@ package raftbuntdb
 import (
 	"encoding/binary"
 	"errors"
+	"strconv"
 
 	"github.com/hashicorp/raft"
 )
@@ -31,12 +32,12 @@ func encodeLog(in *raft.Log) ([]byte, error) {
 
 // Converts string to an integer
 func stringToUint64(s string) uint64 {
-	return binary.LittleEndian.Uint64([]byte(s))
+	n, _ := strconv.ParseUint(s, 10, 64)
+	return n
 }
 
 // Converts a uint to a string
 func uint64ToString(u uint64) string {
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, u)
-	return string(buf)
+	s := ("00000000000000000000" + strconv.FormatUint(u, 10))
+	return s[len(s)-20:]
 }

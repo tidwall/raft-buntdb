@@ -40,27 +40,12 @@ func NewBuntStore(path string) (*BuntStore, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	// Create the new store
 	store := &BuntStore{
 		conn: handle,
 		path: path,
 	}
-
-	// Set up our buckets
-	if err := store.initialize(); err != nil {
-		store.Close()
-		return nil, err
-	}
-
 	return store, nil
-}
-
-// initialize is used to set up all of the buckets.
-func (b *BuntStore) initialize() error {
-	return b.conn.Update(func(tx *buntdb.Tx) error {
-		return nil
-	})
 }
 
 // Close is used to gracefully close the DB connection.
