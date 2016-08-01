@@ -11,7 +11,7 @@ import (
 const (
 	// Permissions to use on the db file. This is only used if the
 	// database file does not exist and needs to be created.
-	dbFileMode = 0600
+	dbFileMode = 0666
 )
 
 var (
@@ -42,6 +42,8 @@ func NewBuntStore(path string) (*BuntStore, error) {
 		return nil, err
 	}
 
+	// Disable the AutoShrink. Shrinking should only be manually
+	// handled following a log compaction.
 	var config buntdb.Config
 	if err := db.ReadConfig(&config); err != nil {
 		db.Close()
@@ -67,6 +69,7 @@ func (b *BuntStore) Close() error {
 }
 
 // Shrink will trigger a shrink operation on the aof file.
+// Useful after a log compaction is completed.
 func (b *BuntStore) Shrink() error {
 	return b.db.Shrink()
 }
@@ -105,35 +108,12 @@ func (b *BuntStore) LastIndex() (uint64, error) {
 	return stringToUint64(snum), nil
 }
 
-// AscendLog is used to iterate through all log entries.
-func (b *BuntStore) AscendLog(iter func(log *raft.Log) bool) error {
+// AscendLogGreaterOrEqual is used to iterate through log entries.
+func (b *BuntStore) AscendLogGreaterOrEqual(pivot uint64, iter func(log *raft.Log) bool) error {
 	return b.db.View(func(tx *buntdb.Tx) error {
 		var ierr error
-		err := tx.AscendGreaterOrEqual("", dbLogs,
-			func(key, val string) bool {
-				if !strings.HasPrefix(key, dbLogs) {
-					return false
-				}
-				var log raft.Log
-				if err := decodeLog([]byte(val), &log); err != nil {
-					ierr = err
-					return false
-				}
-				return iter(&log)
-			},
-		)
-		if err != nil {
-			return err
-		}
-		return ierr
-	})
-}
 
-// DescendLog is used to iterate through all log entries backwards.
-func (b *BuntStore) DescendLog(iter func(log *raft.Log) bool) error {
-	return b.db.View(func(tx *buntdb.Tx) error {
-		var ierr error
-		err := tx.DescendGreaterThan("", dbLogs,
+		err := tx.AscendGreaterOrEqual("", dbLogs+uint64ToString(pivot),
 			func(key, val string) bool {
 				if !strings.HasPrefix(key, dbLogs) {
 					return false
