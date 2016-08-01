@@ -159,12 +159,14 @@ func (b *BuntStore) StoreLog(log *raft.Log) error {
 func (b *BuntStore) StoreLogs(logs []*raft.Log) error {
 	err := b.db.Update(func(tx *buntdb.Tx) error {
 		for _, log := range logs {
-			key := dbLogs + uint64ToString(log.Index)
+			key := make([]byte, 0, 22)
+			key = append(key, dbLogs...)
+			key = append(key, uint64ToString(log.Index)...)
 			val, err := encodeLog(log)
 			if err != nil {
 				return err
 			}
-			if _, _, err := tx.Set(key, string(val), nil); err != nil {
+			if _, _, err := tx.Set(string(key), string(val), nil); err != nil {
 				return err
 			}
 		}
