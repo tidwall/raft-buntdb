@@ -2,6 +2,7 @@ package raftbuntdb
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/hashicorp/raft"
 	"github.com/tidwall/buntdb"
@@ -27,7 +28,7 @@ var (
 // a LogStore and StableStore.
 type BuntStore struct {
 	// conn is the underlying handle to the db.
-	conn *buntdb.DB
+	db *buntdb.DB
 
 	// The path to the Bunt database file
 	path string
@@ -36,13 +37,25 @@ type BuntStore struct {
 // NewBuntStore takes a file path and returns a connected Raft backend.
 func NewBuntStore(path string) (*BuntStore, error) {
 	// Try to connect
-	handle, err := buntdb.Open(path)
+	db, err := buntdb.Open(path)
 	if err != nil {
 		return nil, err
 	}
+
+	var config buntdb.Config
+	if err := db.ReadConfig(&config); err != nil {
+		db.Close()
+		return nil, err
+	}
+	config.AutoShrinkDisabled = true
+	if err := db.SetConfig(config); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	// Create the new store
 	store := &BuntStore{
-		conn: handle,
+		db:   db,
 		path: path,
 	}
 	return store, nil
@@ -50,13 +63,18 @@ func NewBuntStore(path string) (*BuntStore, error) {
 
 // Close is used to gracefully close the DB connection.
 func (b *BuntStore) Close() error {
-	return b.conn.Close()
+	return b.db.Close()
+}
+
+// Shrink will trigger a shrink operation on the aof file.
+func (b *BuntStore) Shrink() error {
+	return b.db.Shrink()
 }
 
 // FirstIndex returns the first known index from the Raft log.
 func (b *BuntStore) FirstIndex() (uint64, error) {
 	var snum string
-	err := b.conn.View(func(tx *buntdb.Tx) error {
+	err := b.db.View(func(tx *buntdb.Tx) error {
 		return tx.AscendGreaterOrEqual("", dbLogs,
 			func(key, val string) bool {
 				snum = key[len(dbLogs):]
@@ -73,7 +91,7 @@ func (b *BuntStore) FirstIndex() (uint64, error) {
 // LastIndex returns the last known index from the Raft log.
 func (b *BuntStore) LastIndex() (uint64, error) {
 	var snum string
-	err := b.conn.View(func(tx *buntdb.Tx) error {
+	err := b.db.View(func(tx *buntdb.Tx) error {
 		return tx.DescendGreaterThan("", dbLogs,
 			func(key, val string) bool {
 				snum = key[len(dbLogs):]
@@ -87,11 +105,59 @@ func (b *BuntStore) LastIndex() (uint64, error) {
 	return stringToUint64(snum), nil
 }
 
+// AscendLog is used to iterate through all log entries.
+func (b *BuntStore) AscendLog(iter func(log *raft.Log) bool) error {
+	return b.db.View(func(tx *buntdb.Tx) error {
+		var ierr error
+		err := tx.AscendGreaterOrEqual("", dbLogs,
+			func(key, val string) bool {
+				if !strings.HasPrefix(key, dbLogs) {
+					return false
+				}
+				var log raft.Log
+				if err := decodeLog([]byte(val), &log); err != nil {
+					ierr = err
+					return false
+				}
+				return iter(&log)
+			},
+		)
+		if err != nil {
+			return err
+		}
+		return ierr
+	})
+}
+
+// DescendLog is used to iterate through all log entries backwards.
+func (b *BuntStore) DescendLog(iter func(log *raft.Log) bool) error {
+	return b.db.View(func(tx *buntdb.Tx) error {
+		var ierr error
+		err := tx.DescendGreaterThan("", dbLogs,
+			func(key, val string) bool {
+				if !strings.HasPrefix(key, dbLogs) {
+					return false
+				}
+				var log raft.Log
+				if err := decodeLog([]byte(val), &log); err != nil {
+					ierr = err
+					return false
+				}
+				return iter(&log)
+			},
+		)
+		if err != nil {
+			return err
+		}
+		return ierr
+	})
+}
+
 // GetLog is used to retrieve a log from BuntDB at a given index.
 func (b *BuntStore) GetLog(idx uint64, log *raft.Log) error {
 	var val string
 	var verr error
-	err := b.conn.View(func(tx *buntdb.Tx) error {
+	err := b.db.View(func(tx *buntdb.Tx) error {
 		val, verr = tx.Get(dbLogs + uint64ToString(idx))
 		return verr
 	})
@@ -111,7 +177,7 @@ func (b *BuntStore) StoreLog(log *raft.Log) error {
 
 // StoreLogs is used to store a set of raft logs
 func (b *BuntStore) StoreLogs(logs []*raft.Log) error {
-	err := b.conn.Update(func(tx *buntdb.Tx) error {
+	err := b.db.Update(func(tx *buntdb.Tx) error {
 		for _, log := range logs {
 			key := dbLogs + uint64ToString(log.Index)
 			val, err := encodeLog(log)
@@ -129,7 +195,7 @@ func (b *BuntStore) StoreLogs(logs []*raft.Log) error {
 
 // DeleteRange is used to delete logs within a given range inclusively.
 func (b *BuntStore) DeleteRange(min, max uint64) error {
-	return b.conn.Update(func(tx *buntdb.Tx) error {
+	return b.db.Update(func(tx *buntdb.Tx) error {
 		for i := min; i <= max; i++ {
 			if _, err := tx.Delete(dbLogs + uint64ToString(i)); err != nil {
 				if err != buntdb.ErrNotFound {
@@ -143,7 +209,7 @@ func (b *BuntStore) DeleteRange(min, max uint64) error {
 
 // Set is used to set a key/value set outside of the raft log
 func (b *BuntStore) Set(k, v []byte) error {
-	return b.conn.Update(func(tx *buntdb.Tx) error {
+	return b.db.Update(func(tx *buntdb.Tx) error {
 		_, _, err := tx.Set(dbConf+string(k), string(v), nil)
 		return err
 	})
@@ -152,7 +218,7 @@ func (b *BuntStore) Set(k, v []byte) error {
 // Get is used to retrieve a value from the k/v store by key
 func (b *BuntStore) Get(k []byte) ([]byte, error) {
 	var rval []byte
-	err := b.conn.View(func(tx *buntdb.Tx) error {
+	err := b.db.View(func(tx *buntdb.Tx) error {
 		key := make([]byte, 0, 64)
 		key = append(key, dbConf...)
 		key = append(key, k...)
