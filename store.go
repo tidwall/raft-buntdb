@@ -1,17 +1,22 @@
 package raftbuntdb
 
 import (
+	"encoding/binary"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/hashicorp/raft"
 	"github.com/tidwall/buntdb"
 )
 
+type Level int
+
 const (
-	// Permissions to use on the db file. This is only used if the
-	// database file does not exist and needs to be created.
-	dbFileMode = 0666
+	Low    Level = -1
+	Medium Level = 0
+	High   Level = 1
 )
 
 var (
@@ -35,7 +40,7 @@ type BuntStore struct {
 }
 
 // NewBuntStore takes a file path and returns a connected Raft backend.
-func NewBuntStore(path string) (*BuntStore, error) {
+func NewBuntStore(path string, durability Level) (*BuntStore, error) {
 	// Try to connect
 	db, err := buntdb.Open(path)
 	if err != nil {
@@ -50,6 +55,14 @@ func NewBuntStore(path string) (*BuntStore, error) {
 		return nil, err
 	}
 	config.AutoShrinkDisabled = true
+	switch durability {
+	case Low:
+		config.SyncPolicy = buntdb.Never
+	case Medium:
+		config.SyncPolicy = buntdb.EverySecond
+	case High:
+		config.SyncPolicy = buntdb.Always
+	}
 	if err := db.SetConfig(config); err != nil {
 		db.Close()
 		return nil, err
@@ -76,61 +89,42 @@ func (b *BuntStore) Shrink() error {
 
 // FirstIndex returns the first known index from the Raft log.
 func (b *BuntStore) FirstIndex() (uint64, error) {
-	var snum string
+	var num string
 	err := b.db.View(func(tx *buntdb.Tx) error {
-		return tx.AscendGreaterOrEqual("", dbLogs,
+		return tx.Ascend("",
 			func(key, val string) bool {
-				snum = key[len(dbLogs):]
-				return false
+				if strings.HasPrefix(key, dbLogs) {
+					num = key[len(dbLogs):]
+					return false
+				}
+				return true
 			},
 		)
 	})
-	if err != nil || snum == "" {
+	if err != nil || num == "" {
 		return 0, err
 	}
-	return stringToUint64(snum), nil
+	return stringToUint64(num), nil
 }
 
 // LastIndex returns the last known index from the Raft log.
 func (b *BuntStore) LastIndex() (uint64, error) {
-	var snum string
+	var num string
 	err := b.db.View(func(tx *buntdb.Tx) error {
-		return tx.DescendGreaterThan("", dbLogs,
+		return tx.Descend("",
 			func(key, val string) bool {
-				snum = key[len(dbLogs):]
-				return false
+				if strings.HasPrefix(key, dbLogs) {
+					num = key[len(dbLogs):]
+					return false
+				}
+				return true
 			},
 		)
 	})
-	if err != nil || snum == "" {
+	if err != nil || num == "" {
 		return 0, err
 	}
-	return stringToUint64(snum), nil
-}
-
-// AscendLogGreaterOrEqual is used to iterate through log entries.
-func (b *BuntStore) AscendLogGreaterOrEqual(pivot uint64, iter func(log *raft.Log) bool) error {
-	return b.db.View(func(tx *buntdb.Tx) error {
-		var ierr error
-
-		err := tx.AscendGreaterOrEqual("", dbLogs+uint64ToString(pivot),
-			func(key, val string) bool {
-				if !strings.HasPrefix(key, dbLogs) {
-					return false
-				}
-				var log raft.Log
-				if err := decodeLog([]byte(val), &log); err != nil {
-					ierr = err
-					return false
-				}
-				return iter(&log)
-			},
-		)
-		if err != nil {
-			return err
-		}
-		return ierr
-	})
+	return stringToUint64(num), nil
 }
 
 // GetLog is used to retrieve a log from BuntDB at a given index.
@@ -159,14 +153,11 @@ func (b *BuntStore) StoreLog(log *raft.Log) error {
 func (b *BuntStore) StoreLogs(logs []*raft.Log) error {
 	err := b.db.Update(func(tx *buntdb.Tx) error {
 		for _, log := range logs {
-			key := make([]byte, 0, 22)
-			key = append(key, dbLogs...)
-			key = append(key, uint64ToString(log.Index)...)
 			val, err := encodeLog(log)
 			if err != nil {
 				return err
 			}
-			if _, _, err := tx.Set(string(key), string(val), nil); err != nil {
+			if _, _, err := tx.Set(dbLogs+uint64ToString(log.Index), string(val), nil); err != nil {
 				return err
 			}
 		}
@@ -199,17 +190,13 @@ func (b *BuntStore) Set(k, v []byte) error {
 
 // Get is used to retrieve a value from the k/v store by key
 func (b *BuntStore) Get(k []byte) ([]byte, error) {
-	var rval []byte
+	var val []byte
 	err := b.db.View(func(tx *buntdb.Tx) error {
-		key := make([]byte, 0, 64)
-		key = append(key, dbConf...)
-		key = append(key, k...)
-		val, err := tx.Get(string(key))
+		sval, err := tx.Get(dbConf + string(k))
 		if err != nil {
 			return err
 		}
-		rval = make([]byte, len(val))
-		copy(rval, []byte(val))
+		val = []byte(sval)
 		return nil
 	})
 	if err != nil {
@@ -217,15 +204,15 @@ func (b *BuntStore) Get(k []byte) ([]byte, error) {
 			return nil, ErrKeyNotFound
 		}
 	}
-	if rval == nil {
-		rval = []byte{}
+	if err != nil {
+		return nil, err
 	}
-	return rval, nil
+	return val, nil
 }
 
 // SetUint64 is like Set, but handles uint64 values
 func (b *BuntStore) SetUint64(key []byte, val uint64) error {
-	return b.Set(key, []byte(uint64ToString(val)))
+	return b.Set(key, []byte(strconv.FormatUint(val, 10)))
 }
 
 // GetUint64 is like Get, but handles uint64 values
@@ -234,5 +221,65 @@ func (b *BuntStore) GetUint64(key []byte) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return stringToUint64(string(val)), nil
+	return strconv.ParseUint(string(val), 10, 64)
+
+}
+
+// Peers returns raft peers
+func (b *BuntStore) Peers() ([]string, error) {
+	var peers []string
+	val, err := b.Get([]byte("peers"))
+	if err != nil {
+		if err == ErrKeyNotFound {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+	if err := json.Unmarshal(val, &peers); err != nil {
+		return nil, err
+	}
+	return peers, nil
+}
+
+// SetPeers sets raft peers
+func (b *BuntStore) SetPeers(peers []string) error {
+	data, err := json.Marshal(peers)
+	if err != nil {
+		return err
+	}
+	return b.Set([]byte("peers"), data)
+}
+
+// Decode reverses the encode operation on a byte slice input
+func decodeLog(buf []byte, in *raft.Log) error {
+	if len(buf) < 17 {
+		return errors.New("invalid buffer")
+	}
+	in.Index = binary.LittleEndian.Uint64(buf[0:8])
+	in.Term = binary.LittleEndian.Uint64(buf[8:16])
+	in.Type = raft.LogType(buf[16])
+	in.Data = buf[17:]
+	return nil
+}
+
+// Encode writes an encoded object to a new bytes buffer
+func encodeLog(in *raft.Log) ([]byte, error) {
+	buf := make([]byte, 17+len(in.Data))
+	binary.LittleEndian.PutUint64(buf[0:8], in.Index)
+	binary.LittleEndian.PutUint64(buf[8:16], in.Term)
+	buf[16] = byte(in.Type)
+	copy(buf[17:], in.Data)
+	return buf, nil
+}
+
+// Converts string to an integer
+func stringToUint64(s string) uint64 {
+	n, _ := strconv.ParseUint(s, 10, 64)
+	return n
+}
+
+// Converts a uint to a string
+func uint64ToString(u uint64) string {
+	s := strings.Repeat("0", 20) + strconv.FormatUint(u, 10)
+	return s[len(s)-20:]
 }

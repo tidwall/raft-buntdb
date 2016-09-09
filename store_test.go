@@ -20,7 +20,7 @@ func testBuntStore(t testing.TB) *BuntStore {
 	os.Remove(fh.Name())
 
 	// Successfully creates and returns a store
-	store, err := NewBuntStore(fh.Name())
+	store, err := NewBuntStore(fh.Name(), High)
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
@@ -43,6 +43,9 @@ func TestBuntStore_Implements(t *testing.T) {
 	if _, ok := store.(raft.LogStore); !ok {
 		t.Fatalf("BuntStore does not implement raft.LogStore")
 	}
+	if _, ok := store.(raft.PeerStore); !ok {
+		t.Fatalf("BuntStore does not implement raft.PeerStore")
+	}
 }
 
 func TestNewBuntStore(t *testing.T) {
@@ -54,7 +57,7 @@ func TestNewBuntStore(t *testing.T) {
 	defer os.Remove(fh.Name())
 
 	// Successfully creates and returns a store
-	store, err := NewBuntStore(fh.Name())
+	store, err := NewBuntStore(fh.Name(), High)
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
@@ -87,6 +90,33 @@ func TestNewBuntStore(t *testing.T) {
 	//if _, err := tx.CreateBucket([]byte(dbConf)); err != bunt.ErrBucketExists {
 	//	t.Fatalf("bad: %v", err)
 	//}
+}
+
+func TestBuntStore_Peers(t *testing.T) {
+	store := testBuntStore(t)
+	defer store.Close()
+	defer os.Remove(store.path)
+	peers, err := store.Peers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(peers) != 0 {
+		t.Fatalf("expected '%v', got '%v'", 0, len(peers))
+	}
+	v := []string{"1", "2", "3"}
+	if err := store.SetPeers(v); err != nil {
+		t.Fatal(err)
+	}
+	peers, err = store.Peers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(peers) != 3 {
+		t.Fatalf("expected '%v', got '%v'", 3, len(peers))
+	}
+	if peers[0] != "1" || peers[1] != "2" || peers[2] != "3" {
+		t.Fatalf("expected %v, got %v", v, peers)
+	}
 }
 
 func TestBuntStore_FirstIndex(t *testing.T) {
