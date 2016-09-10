@@ -20,7 +20,7 @@ func testBuntStore(t testing.TB) *BuntStore {
 	os.Remove(fh.Name())
 
 	// Successfully creates and returns a store
-	store, err := NewBuntStore(fh.Name(), High)
+	store, err := NewBuntStore(fh.Name(), Medium)
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
