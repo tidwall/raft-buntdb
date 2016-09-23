@@ -1,6 +1,8 @@
 raft-buntdb
 ===========
 
+For a better and faster Raft store please see the [raft-fastlog](https://github.com/tidwall/raft-fastlog) project.
+
 This repository provides the `raftbuntdb` package. 
 The package exports the `BuntStore` which is an implementation of both a 
 `LogStore` and `StableStore`.
