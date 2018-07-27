@@ -43,9 +43,6 @@ func TestBuntStore_Implements(t *testing.T) {
 	if _, ok := store.(raft.LogStore); !ok {
 		t.Fatalf("BuntStore does not implement raft.LogStore")
 	}
-	if _, ok := store.(raft.PeerStore); !ok {
-		t.Fatalf("BuntStore does not implement raft.PeerStore")
-	}
 }
 
 func TestNewBuntStore(t *testing.T) {
@@ -368,7 +365,7 @@ func TestUtilHex(t *testing.T) {
 		h := uint64ToString(i1)
 		i2 := stringToUint64(h)
 		if i2 != i1 {
-			t.Fatal("expected: %v, got %v", i1, i2)
+			t.Fatalf("expected: %v, got %v", i1, i2)
 		}
 	}
 	for i := 0; i < 100000; i++ {
@@ -376,7 +373,7 @@ func TestUtilHex(t *testing.T) {
 		h := uint64ToString(i1)
 		i2 := stringToUint64(h)
 		if i2 != i1 {
-			t.Fatal("expected: %v, got %v", i1, i2)
+			t.Fatalf("expected: %v, got %v", i1, i2)
 		}
 	}
 }
