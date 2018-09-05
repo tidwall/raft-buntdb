@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashicorp/raft"
+	"github.com/tidwall/raft"
 )
 
 func testBuntStore(t testing.TB) *BuntStore {
@@ -368,7 +368,7 @@ func TestUtilHex(t *testing.T) {
 		h := uint64ToString(i1)
 		i2 := stringToUint64(h)
 		if i2 != i1 {
-			t.Fatal("expected: %v, got %v", i1, i2)
+			t.Fatalf("expected: %v, got %v", i1, i2)
 		}
 	}
 	for i := 0; i < 100000; i++ {
@@ -376,7 +376,7 @@ func TestUtilHex(t *testing.T) {
 		h := uint64ToString(i1)
 		i2 := stringToUint64(h)
 		if i2 != i1 {
-			t.Fatal("expected: %v, got %v", i1, i2)
+			t.Fatalf("expected: %v, got %v", i1, i2)
 		}
 	}
 }

@@ -7,9 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hashicorp/raft"
 	"github.com/tidwall/buntdb"
-	"github.com/tidwall/cast"
+	"github.com/tidwall/raft"
 )
 
 type Level int
@@ -159,7 +158,7 @@ func (b *BuntStore) StoreLogs(logs []*raft.Log) error {
 				return err
 			}
 			if _, _, err := tx.Set(dbLogs+uint64ToString(log.Index),
-				cast.ToString(val), nil); err != nil {
+				string(val), nil); err != nil {
 				return err
 			}
 		}
@@ -185,7 +184,7 @@ func (b *BuntStore) DeleteRange(min, max uint64) error {
 // Set is used to set a key/value set outside of the raft log
 func (b *BuntStore) Set(k, v []byte) error {
 	return b.db.Update(func(tx *buntdb.Tx) error {
-		_, _, err := tx.Set(dbConf+cast.ToString(k), cast.ToString(v), nil)
+		_, _, err := tx.Set(dbConf+string(k), string(v), nil)
 		return err
 	})
 }
@@ -194,7 +193,7 @@ func (b *BuntStore) Set(k, v []byte) error {
 func (b *BuntStore) Get(k []byte) ([]byte, error) {
 	var val []byte
 	err := b.db.View(func(tx *buntdb.Tx) error {
-		sval, err := tx.Get(dbConf + cast.ToString(k))
+		sval, err := tx.Get(dbConf + string(k))
 		if err != nil {
 			return err
 		}
@@ -223,7 +222,7 @@ func (b *BuntStore) GetUint64(key []byte) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return strconv.ParseUint(cast.ToString(val), 10, 64)
+	return strconv.ParseUint(string(val), 10, 64)
 
 }
 
@@ -254,7 +253,7 @@ func (b *BuntStore) SetPeers(peers []string) error {
 
 // Decode reverses the encode operation on a byte slice input
 func decodeLog(s string, in *raft.Log) error {
-	buf := cast.ToBytes(s)
+	buf := []byte(s)
 	if len(buf) < 17 {
 		return errors.New("invalid buffer")
 	}
