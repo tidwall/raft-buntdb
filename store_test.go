@@ -43,9 +43,6 @@ func TestBuntStore_Implements(t *testing.T) {
 	if _, ok := store.(raft.LogStore); !ok {
 		t.Fatalf("BuntStore does not implement raft.LogStore")
 	}
-	if _, ok := store.(raft.PeerStore); !ok {
-		t.Fatalf("BuntStore does not implement raft.PeerStore")
-	}
 }
 
 func TestNewBuntStore(t *testing.T) {
